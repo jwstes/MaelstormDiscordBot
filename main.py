@@ -345,7 +345,7 @@ async def checkbal(ctx):
         except Exception as e:
             await ctx.send(f"An error occurred while checking your balance: {str(e)}")
 
-bot.run("MTM0MDI0MTQ3NjQzNjYyNzUxOA.Grzt8K.vnAbz8gVTiguF0diSgd6VCSYYeZ4gwMl-eiCrw")
+bot.run("")
 
 
 
