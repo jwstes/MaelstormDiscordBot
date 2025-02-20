@@ -2,19 +2,157 @@ import discord
 from discord.ext import commands
 import aiohttp
 import asyncio
-
+import cv2
+import numpy as np
+import random
+import string
+import io
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.presences = True
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+
+def generate_captcha():
+    # Generate a random 5-character captcha (letters and digits)
+    captcha_text = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    
+    # Create a white image
+    width, height = 200, 100
+    image = np.ones((height, width, 3), dtype=np.uint8) * 255
+    
+    # Draw the text (centered) on the image
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.5
+    thickness = 3
+    text_size, _ = cv2.getTextSize(captcha_text, font, font_scale, thickness)
+    text_x = (width - text_size[0]) // 2
+    text_y = (height + text_size[1]) // 2
+    cv2.putText(image, captcha_text, (text_x, text_y), font, font_scale, (0, 0, 0), thickness, cv2.LINE_AA)
+    
+    # Optionally, add some random lines for complexity
+    for _ in range(8):
+        x1 = random.randint(0, width)
+        y1 = random.randint(0, height)
+        x2 = random.randint(0, width)
+        y2 = random.randint(0, height)
+        cv2.line(image, (x1, y1), (x2, y2), (0, 0, 0), 1)
+    
+    # Save the image to an in-memory file
+    _, buffer = cv2.imencode('.png', image)
+    io_buf = io.BytesIO(buffer)
+    file = discord.File(fp=io_buf, filename="captcha.png")
+    
+    return captcha_text, file
+
+@bot.event
+async def on_member_join(member):
+    if member.bot:
+        return
+    try:
+        dm_channel = await member.create_dm()
+        await dm_channel.send("Welcome to the server! Please complete the verification below by solving the captcha.")
+        captcha_text, captcha_file = generate_captcha()
+        await dm_channel.send("Please type the text shown in the image below:", file=captcha_file)
+
+        def check(m):
+            return m.author == member and m.channel == dm_channel
+        response = await bot.wait_for("message", check=check, timeout=60.0)
+
+        if response.content.strip() == captcha_text:
+            await dm_channel.send("Verification successful! You now have access to the server.")
+            role = member.guild.get_role(1342095270904594534)
+            if role:
+                await member.add_roles(role)
+            else:
+                await dm_channel.send("Verification passed, but the role was not found.")
+        else:
+            await dm_channel.send("Incorrect captcha. Please retrigger verification by sending \"!verify\".")
+    except asyncio.TimeoutError:
+        await dm_channel.send("You took too long to respond. You can retrigger verification by sending \"!verify\".")
+
+@bot.command(name="verify")
+async def verify(ctx):
+    # Ensure the command is run in DMs.
+    if ctx.guild is not None:
+        try:
+            await ctx.author.send("For security, please use the !verify command in DMs.")
+        except Exception:
+            await ctx.send("Please use the !verify command in DMs.")
+        return
+
+    member = ctx.author
+
+    guild = next((g for g in bot.guilds if g.get_member(member.id)), None)
+    if guild is None:
+        await ctx.send("Could not find a guild where you are a member.")
+        return
+
+    role = guild.get_role(1342095270904594534)
+    guild_member = guild.get_member(member.id)
+    if role in guild_member.roles:
+        await ctx.send("You already have the designated role. No need to verify again!")
+        return
+
+    try:
+        captcha_text, captcha_file = generate_captcha()
+        await ctx.send("Please type the text shown in the image below:", file=captcha_file)
+
+        def check(m):
+            return m.author == member and m.channel == ctx.channel
+
+        response = await bot.wait_for("message", check=check, timeout=60.0)
+
+        if response.content.strip() == captcha_text:
+            await ctx.send("Verification successful! You now have access to the server.")
+            try:
+                await guild_member.add_roles(role)
+                await ctx.send("Role assigned successfully!")
+            except Exception as e:
+                await ctx.send("An error occurred while assigning your role.")
+        else:
+            await ctx.send("Incorrect captcha. Please try again by sending \"!verify\".")
+    except asyncio.TimeoutError:
+        await ctx.send("Verification timed out. Please try again by sending \"!verify\".")
+
+
+
+
+# @bot.command(name="admintest")
+# @commands.has_permissions(administrator=True)
+# async def admintest(ctx):
+#     role = ctx.guild.get_role(1342095270904594534)
+#     if role is None:
+#         return await ctx.send("Error: Role not found in this server.")
+
+#     online_members = [member for member in ctx.guild.members
+#                       if not member.bot and member.status != discord.Status.offline]
+
+#     if not online_members:
+#         return await ctx.send("No online members found. Make sure Presences Intent is enabled in your developer portal and in your code.")
+
+#     count_assigned = 0
+#     for member in online_members:
+#         try:
+#             print(f"Adding {count_assigned}")
+#             await member.add_roles(role)
+#             count_assigned += 1
+#         except Exception as e:
+#             print(f"Error assigning role to {member}: {e}")
+
+#     await ctx.send(f"Assigned the role to {count_assigned} online members.")
+
+
+
 
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print("------")
-
-
 
 
 @bot.command(name="topup")
@@ -120,10 +258,6 @@ async def purchase(ctx):
 
     await ctx.send(embed=embed, view=view)
 
-
-
-
-
 @bot.command(name="getkey")
 async def getkey(ctx):
     if "ticket" not in ctx.channel.name.lower():
@@ -211,4 +345,8 @@ async def checkbal(ctx):
         except Exception as e:
             await ctx.send(f"An error occurred while checking your balance: {str(e)}")
 
-bot.run("MTM0MDI0MTQ3NjQzNjYyNzUxOA.G22QJQ.1ygG8WlsDIDprCT0mG3rxZgnHDD0DiJ1Q9MQkY")
+bot.run("MTM0MDI0MTQ3NjQzNjYyNzUxOA.Grzt8K.vnAbz8gVTiguF0diSgd6VCSYYeZ4gwMl-eiCrw")
+
+
+
+# https://discord.gg/r9umYM9qc5
